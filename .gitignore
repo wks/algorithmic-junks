@@ -5,3 +5,6 @@
 ts*
 ans*
 out*
+*.gcov
+*.gcda
+*.gcno

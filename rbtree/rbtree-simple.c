@@ -2,6 +2,20 @@
 #include <stdlib.h>
 #include <assert.h>
 
+#define _RBTREE_DEBUG_
+
+#ifdef _RBTREE_DEBUG_
+#define trace printf
+#define debug_only(x) x
+#define debug_print_tree print_tree
+#define debug_print_subtree print_subtree
+#else
+#define trace
+#define debug_only
+#define debug_print_tree
+#define debug_print_subtree
+#endif
+
 typedef int value_t;
 
 enum rbnode_color { BLACK, RED };
@@ -36,7 +50,7 @@ void print_tree(rbtree_t *tree) {
     print_subtree(tree->root, 0);
 }
 
-rbnode_t *find_node(rbtree_t *tree, value_t value) {
+rbnode_t *rbtree_find_node(rbtree_t *tree, value_t value) {
     rbnode_t *node = tree->root;
 
     while (node != NULL && value != node->value) {
@@ -221,7 +235,152 @@ int rbtree_insert(rbtree_t *tree, rbnode_t *new_node) {
     rbtree_insert_adjust(tree, new_node);
 }
 
+void rbtree_delete_adjust(rbtree_t *tree, rbnode_t *node, rbnode_t *parent) {
+    while ((node==NULL || node->color == BLACK) && parent != NULL) {
+        trace("Adjusting. node=%p parent=%p\n", node, parent);
+        if (parent->left == node) {
+            trace("Node on the left.\n");
+            rbnode_t *brother = parent->right;
+
+            // Make sure the current node's brother is also black
+            if (brother->color == RED) {
+                trace("Brother %d@%p is red. Rotating...\n", brother->value, brother);
+                brother->color = BLACK;
+                parent->color = RED;
+                rbtree_rotate_left(tree, parent);
+                brother = parent->right;
+                trace("New brother %p\n", brother);
+                printf("------after rotating brother-----\n");
+                print_tree(tree);
+            }
+
+            if ((brother->left == NULL || brother->left->color == BLACK) &&
+                    (brother->right == NULL || brother->right->color == BLACK)) {
+                // Paint the brother red.
+                // Then both children of "parent" have one less black node in every
+                // path to the leaves. We then adjust the parent instead.
+                trace("Both children of brother are black.\n");
+                brother->color = RED;
+                node = parent;
+                parent = node->parent;
+                continue;
+            } else {
+                // Make sure the brother has a red right-child.
+                // Note: Both children may be red.
+                if (brother->right == NULL || brother->right->color == BLACK) {
+                    trace("Brother %d @ %p has a black right child.\n", brother->value, brother);
+                    brother->color = RED;
+                    brother->left->color = BLACK;
+                    brother = rbtree_rotate_right(tree, brother);
+                }
+
+                // Rotate to re-balance the subtree of the 'parent' node.
+                brother->color = parent->color;
+                parent->color = BLACK;
+                brother->right->color = BLACK;
+                rbtree_rotate_left(tree, parent);
+            }
+        } else {
+            trace("Node on the right.\n");
+            rbnode_t *brother = parent->left;
+
+            // Make sure the current node's brother is also black
+            if (brother->color == RED) {
+                trace("Brother %d@%p is red. Rotating...\n", brother->value, brother);
+                brother->color = BLACK;
+                parent->color = RED;
+                rbtree_rotate_right(tree, parent);
+                brother = parent->left;
+                trace("New brother %p\n", brother);
+                printf("------after rotating brother-----\n");
+                print_tree(tree);
+            }
+
+            if ((brother->left == NULL || brother->left->color == BLACK) &&
+                    (brother->right == NULL || brother->right->color == BLACK)) {
+                // Paint the brother red.
+                // Then both children of "parent" have one less black node in every
+                // path to the leaves. We then adjust the parent instead.
+                trace("Both children of brother are black.\n");
+                brother->color = RED;
+                node = parent;
+                parent = node->parent;
+                continue;
+            } else {
+                // Make sure the brother has a red left-child.
+                // Note: Both children may be red.
+                if (brother->left == NULL || brother->left->color == BLACK) {
+                    trace("Brother %d @ %p has a black left child.\n", brother->value, brother);
+                    brother->color = RED;
+                    brother->right->color = BLACK;
+                    brother = rbtree_rotate_left(tree, brother);
+                }
+
+                // Rotate to re-balance the subtree of the 'parent' node.
+                brother->color = parent->color;
+                parent->color = BLACK;
+                brother->left->color = BLACK;
+                rbtree_rotate_right(tree, parent);
+            }
+        }
+
+        break;
+    }
+    if (node != NULL && node->color == RED) {
+        trace("Dyeing node %d @ %p to black\n", node->value, node);
+        // Repaint this node to black.
+        // Then the number of black nodes of all paths returns to normal.
+        node->color = BLACK;
+    }
+}
+
+void rbtree_delete(rbtree_t *tree, rbnode_t *node) {
+    if (node->left != NULL && node->right != NULL) {
+        // Both children are non-leaf. Replace with the next smallest node.
+        rbnode_t *old = node;
+
+        node = node->right;
+        while(node->left != NULL) {
+            node = node->left;
+        }
+
+        // Unlike the kernel, our nodes contain values.
+        // We just replace the value, not the node itself.
+        old->value = node->value;
+    }
+
+    rbnode_t *child = node->left != NULL ? node->left : node->right;
+    rbnode_t *parent = node->parent;
+    enum rbnode_color color = node->color; 
+
+    if (parent != NULL) {
+        if (node == parent->left) {
+            parent->left = child;
+        } else {
+            parent->right = child;
+        }
+    } else {
+        tree->root = child;
+    }
+
+    if (child != NULL) {
+        child->parent = parent;
+    }
+
+    if (color == BLACK) {
+        rbtree_delete_adjust(tree, child, parent);
+    }
+}
+
 #define SZ 10
+
+int valuegen(int i) {
+    return 3*i % 10;
+}
+
+int valuegen2(int i) {
+    return 9-i;
+}
 
 int main() {
     rbtree_t t;
@@ -232,8 +391,8 @@ int main() {
     t.root = NULL;
 
     for (i=0; i<SZ; i++) {
-        nodes[i].value = 3*i % 10;
-        printf("-----inserting %d...-----\n", i);
+        nodes[i].value = valuegen(i);
+        printf("-----inserting %d...-----\n", nodes[i].value);
         rbtree_insert(&t, &nodes[i]);
         printf("-----pre-check-----\n");
         node_check(t.root);
@@ -241,8 +400,25 @@ int main() {
         print_tree(&t);
         printf("-----check-----\n");
         for (j=0; j<=i; j++) {
-            if (find_node(&t, j*3 % 10) == NULL) {
+            if (rbtree_find_node(&t, valuegen(j)) == NULL) {
                 printf("Value %d not found!\n", j);
+            }
+        }
+        printf("============\n");
+    }
+
+    for (i=0; i<SZ; i++) {
+        rbnode_t *node = rbtree_find_node(&t, valuegen2(i));
+        printf("-----deleting %d @ %p...-----\n", node->value, node);
+        rbtree_delete(&t, node);
+        printf("-----pre-check-----\n");
+        node_check(t.root);
+        printf("-----tree-----\n");
+        print_tree(&t);
+        printf("-----check-----\n");
+        for (j=0; j<=i; j++) {
+            if (rbtree_find_node(&t, valuegen2(j)) != NULL) {
+                printf("Value %d still exists!\n", j);
             }
         }
         printf("============\n");
